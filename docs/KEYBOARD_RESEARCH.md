@@ -73,3 +73,35 @@
   https://bramburn.github.io/florisboard/docs
 - HeliBoard source repository:
   https://github.com/HeliBorg/HeliBoard
+
+
+## 8. Layout review based on the user's supplied keyboard reference (15 November 2026)
+
+The supplied reference image shows a familiar Arabic keyboard geometry with a persistent top action strip, three character rows, and a wide bottom action row. The implementation must preserve the *visual position* of the letters (left-to-right order as seen in the image), not silently replace it with a different Arabic keyboard standard.
+
+### Required Arabic visual rows
+
+- Row 1, left to right: `ض ص ق ف غ ع ه خ ح ج`
+- Row 2, left to right: `ش س ي ب ل ا ت ن م ك`
+- Row 3, left to right: `ظ ط ذ د ز ر و ة ث`, with Backspace at the right edge.
+- The bottom strip keeps the symbol switch, `123`, Arabic/English punctuation, a wide space area with cursor movement, period, and Enter.
+- The top strip provides direct access to settings, GIF, emoji, symbols, online translation, clipboard archive, and language switching.
+- Long press should expose alternate Arabic forms such as أ/إ/آ, ؤ, ئ, ى, ة and selected diacritics without crowding the main layout.
+- No autocorrect and no ordinary word prediction. The optional suggestion strip is based only on previously copied archive entries.
+
+The visual implementation may use the project's Cyber palette, but must retain large legible letter glyphs, consistent key spacing, distinct function-key styling, sufficient touch targets, and immediate visual pressed state.
+
+### Research references
+- HeliBoard (AOSP/OpenBoard-derived, privacy-conscious keyboard) provides a reference for multilingual layouts, clipboard history, themes, and separate main/functional/special layouts:
+  https://github.com/HeliBorg/HeliBoard
+- HeliBoard layout documentation describes row-based text and JSON layout definitions and warns against crowding keys:
+  https://github.com/HeliBorg/HeliBoard/blob/main/layouts.md
+- FlorisBoard documents a flexible JSON layout system and separation between character, numeric and other layout types:
+  https://bramburn.github.io/florisboard/docs/technical/layout-system
+- Android's clipboard listener documentation explicitly notes callbacks can also happen when text-classification status changes, so the same underlying clip can cause more than one callback:
+  https://developer.android.com/reference/android/content/ClipboardManager.OnPrimaryClipChangedListener
+- Android's ClipDescription API provides `getTimestamp()`, the timestamp of the clipboard copy event:
+  https://developer.android.com/reference/android/content/ClipDescription#getTimestamp()
+
+### Deduplication design decision
+A clipboard listener callback is not guaranteed to represent a new user copy action. Store the source clipboard timestamp and content SHA-256. A unique database index over `(content_hash, clipboard_timestamp)` makes repeated callbacks for the same Android clip idempotent while allowing the same text copied in a later copy event (with a different timestamp) to be recorded as a new event. For multiple ClipData items belonging to one copy action, combine the textual items into one archive record rather than creating one row per item.
