@@ -7,14 +7,18 @@ import android.content.Intent
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.StateListDrawable
 import android.inputmethodservice.InputMethodService
 import android.text.InputType
 import android.view.Gravity
+import android.view.HapticFeedbackConstants
 import android.view.View
 import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputConnection
+import android.widget.FrameLayout
 import android.widget.LinearLayout
+import android.widget.PopupWindow
 import android.widget.TextView
 import android.widget.Toast
 import com.cybersecurityrahbar.keyboardcyber.MainActivity
@@ -22,16 +26,31 @@ import com.cybersecurityrahbar.keyboardcyber.data.ClipStore
 import com.cybersecurityrahbar.keyboardcyber.data.KeyboardPreferences
 import java.util.concurrent.Executors
 
+private enum class KeyKind { LETTER, FUNCTION, ACCENT }
+
+private data class KeySpec(
+    val label: String,
+    val hint: String = "",
+    val weight: Float = 1f,
+    val kind: KeyKind = KeyKind.LETTER,
+    val alternates: List<String> = emptyList(),
+    val onTap: (() -> Unit)? = null,
+    val onLongPress: (() -> Unit)? = null
+)
+
 class KeyboardImeService : InputMethodService() {
     private lateinit var clipboardManager: ClipboardManager
+    private lateinit var keyboardContainer: LinearLayout
+    private var suggestionsRow: LinearLayout? = null
+
     private val io = Executors.newSingleThreadExecutor()
+    private val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
+
     private var privateInput = false
     private var language = "ar"
     private var symbolsMode = false
     private var emojiMode = false
     private var shiftEnabled = false
-    private var suggestionsRow: LinearLayout? = null
-    private lateinit var keyboardContainer: LinearLayout
 
     private val clipboardListener = ClipboardManager.OnPrimaryClipChangedListener {
         captureClipboard()
@@ -52,54 +71,42 @@ class KeyboardImeService : InputMethodService() {
         super.onStartInputView(info, restarting)
         privateInput = isPasswordField(info?.inputType ?: InputType.TYPE_NULL)
         refreshSuggestions()
+        rebuildKeyboard()
     }
 
     override fun onCreateInputView(): View {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(8), dp(8), dp(8), dp(8))
-            background = rounded(Color.rgb(7, 15, 27), Color.rgb(31, 67, 82), 18)
+            layoutDirection = View.LAYOUT_DIRECTION_LTR
+            setPadding(dp(7), dp(8), dp(7), dp(8))
+            background = GradientDrawable(
+                GradientDrawable.Orientation.TOP_BOTTOM,
+                intArrayOf(Color.rgb(7, 16, 29), Color.rgb(10, 25, 42), Color.rgb(5, 12, 22))
+            ).apply {
+                cornerRadius = dp(18).toFloat()
+                setStroke(dp(1), Color.rgb(30, 74, 91))
+            }
         }
 
-        val toolbar = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-        }
-        val brand = TextView(this).apply {
-            text = "CYBER"
-            setTextColor(Color.rgb(53, 224, 190))
-            textSize = 12f
-            typeface = Typeface.DEFAULT_BOLD
-            letterSpacing = 0.12f
-            gravity = Gravity.CENTER_VERTICAL
-        }
-        toolbar.addView(brand, LinearLayout.LayoutParams(0, dp(38), 1f))
-        toolbar.addView(actionButton("▤", "الأرشيف") { openArchive() })
-        toolbar.addView(actionButton("⇄", "ترجمة") {
-            Toast.makeText(
-                this,
-                "سيتم ربط الترجمة السحابية الآمنة في المرحلة التالية",
-                Toast.LENGTH_SHORT
-            ).show()
-        })
-        toolbar.addView(actionButton(if (language == "ar") "EN" else "ع", "تغيير اللغة") {
-            language = if (language == "ar") "en" else "ar"
-            rebuildKeyboard()
-        })
-        root.addView(toolbar)
+        root.addView(createToolbar(), LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            dp(42)
+        ))
 
         suggestionsRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
+            layoutDirection = View.LAYOUT_DIRECTION_LTR
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(0, dp(3), 0, dp(5))
+            setPadding(dp(2), dp(3), dp(2), dp(4))
         }
-        root.addView(
-            suggestionsRow,
-            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(42))
-        )
+        root.addView(suggestionsRow, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            dp(37)
+        ))
 
         keyboardContainer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
+            layoutDirection = View.LAYOUT_DIRECTION_LTR
         }
         root.addView(keyboardContainer)
 
@@ -108,217 +115,602 @@ class KeyboardImeService : InputMethodService() {
         return root
     }
 
-    private fun rebuildSuggestions() {
-        val row = suggestionsRow ?: return
-        row.removeAllViews()
-        if (privateInput || !KeyboardPreferences.archiveSuggestionsEnabled(this)) {
-            row.visibility = View.GONE
-            return
+    private fun createToolbar(): LinearLayout {
+        val toolbar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutDirection = View.LAYOUT_DIRECTION_LTR
+            gravity = Gravity.CENTER
         }
-        row.visibility = View.VISIBLE
-        val recent = ClipStore.get(this).recent(3)
-        if (recent.isEmpty()) {
-            val empty = TextView(this).apply {
-                text = "اقتراحاتك من الأرشيف ستظهر هنا"
-                setTextColor(Color.rgb(112, 139, 161))
-                textSize = 10f
-                gravity = Gravity.CENTER_VERTICAL
+
+        val tools = listOf(
+            Triple("⚙", "الإعدادات") { openArchive() },
+            Triple("GIF", "صور متحركة") {
+                toast("قسم GIF قيد التطوير")
+            },
+            Triple("☺", "الإيموجي") {
+                emojiMode = !emojiMode
+                symbolsMode = false
+                rebuildKeyboard()
+            },
+            Triple("⌘", "الرموز") {
+                symbolsMode = !symbolsMode
+                emojiMode = false
+                rebuildKeyboard()
+            },
+            Triple("A⇄文", "الترجمة") {
+                toast("الترجمة عبر الإنترنت قيد الربط")
+            },
+            Triple("▤", "أرشيف النسخ") { openArchive() },
+            Triple("◎", "تبديل اللغة") { toggleLanguage() },
+            Triple("EN", "الإنجليزية") {
+                language = "en"
+                symbolsMode = false
+                emojiMode = false
+                rebuildKeyboard()
+            },
+            Triple("ع", "العربية") {
+                language = "ar"
+                symbolsMode = false
+                emojiMode = false
+                rebuildKeyboard()
             }
-            row.addView(empty)
-            return
-        }
-        recent.forEach { record ->
-            val preview = record.content.replace("\n", " ").take(18)
-            val chip = TextView(this).apply {
-                text = preview
-                setTextColor(Color.rgb(206, 226, 239))
-                textSize = 10f
+        )
+
+        tools.forEach { tool ->
+            val button = TextView(this).apply {
+                text = tool.first
+                contentDescription = tool.second
                 gravity = Gravity.CENTER
-                maxLines = 1
-                ellipsize = android.text.TextUtils.TruncateAt.END
-                background = rounded(Color.rgb(19, 39, 56), Color.rgb(36, 80, 91), 10)
-                setPadding(dp(8), dp(5), dp(8), dp(5))
-                setOnClickListener { currentInputConnection?.commitText(record.content, 1) }
+                setTextColor(Color.rgb(116, 220, 229))
+                textSize = if (tool.first.length > 2) 10f else 19f
+                typeface = Typeface.DEFAULT_BOLD
+                background = toolBackground()
+                setOnClickListener {
+                    performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                    tool.third.invoke()
+                }
             }
-            row.addView(chip, LinearLayout.LayoutParams(0, dp(34), 1f).apply {
-                marginEnd = dp(5)
+            toolbar.addView(button, LinearLayout.LayoutParams(0, dp(36), 1f).apply {
+                setMargins(dp(1), 0, dp(1), 0)
             })
         }
+        return toolbar
     }
 
     private fun refreshSuggestions() {
-        rebuildSuggestions()
+        val row = suggestionsRow ?: return
+        if (privateInput || !KeyboardPreferences.archiveSuggestionsEnabled(this)) {
+            row.removeAllViews()
+            row.visibility = View.GONE
+            return
+        }
+
+        row.visibility = View.VISIBLE
+        io.execute {
+            val recent = runCatching {
+                ClipStore.get(applicationContext).recent(4)
+            }.getOrDefault(emptyList())
+
+            mainHandler.post {
+                val target = suggestionsRow ?: return@post
+                target.removeAllViews()
+                if (privateInput || !KeyboardPreferences.archiveSuggestionsEnabled(this)) {
+                    target.visibility = View.GONE
+                    return@post
+                }
+
+                if (recent.isEmpty()) {
+                    val label = TextView(this).apply {
+                        text = "CLIP ARCHIVE  •  ستظهر هنا مقتطفاتك المنسوخة"
+                        setTextColor(Color.rgb(91, 130, 151))
+                        textSize = 9f
+                        gravity = Gravity.CENTER_VERTICAL
+                    }
+                    target.addView(label)
+                    return@post
+                }
+
+                recent.forEach { record ->
+                    val chip = TextView(this).apply {
+                        text = record.content.replace("\n", " ").take(23)
+                        maxLines = 1
+                        ellipsize = android.text.TextUtils.TruncateAt.END
+                        gravity = Gravity.CENTER
+                        setTextColor(Color.rgb(213, 236, 243))
+                        textSize = 10f
+                        background = roundedBackground(
+                            intArrayOf(Color.rgb(20, 48, 65), Color.rgb(16, 36, 52)),
+                            Color.rgb(40, 105, 119),
+                            9
+                        )
+                        setPadding(dp(8), dp(4), dp(8), dp(4))
+                        setOnClickListener {
+                            currentInputConnection?.commitText(record.content, 1)
+                        }
+                    }
+                    target.addView(chip, LinearLayout.LayoutParams(0, dp(31), 1f).apply {
+                        setMargins(dp(2), 0, dp(2), 0)
+                    })
+                }
+            }
+        }
     }
 
     private fun rebuildKeyboard() {
         if (!::keyboardContainer.isInitialized) return
         keyboardContainer.removeAllViews()
-        if (emojiMode) {
-            addRow(listOf("😀", "😂", "🥹", "😍", "👍", "🔥", "❤️", "✅", "🚀", "🔒")) { commit(it) }
-            addRow(listOf("😊", "😉", "🤔", "😭", "💡", "⚡", "🎯", "🙏")) { commit(it) }
-            addBottomRow()
-            return
-        }
-        if (symbolsMode) {
-            addRow(listOf("1", "2", "3", "4", "5", "6", "7", "8", "9", "0")) { commit(it) }
-            addRow(listOf("@", "#", "\$", "%", "&", "-", "+", "(", ")", "/")) { commit(it) }
-            addRow(listOf("*", "\"", "'", ":", ";", "!", "?", "_", "=", "٫")) { commit(it) }
-            addBottomRow()
-            return
-        }
 
-        if (language == "ar") {
-            addRow("ض ص ث ق ف غ ع ه خ ح ج".split(" ")) { commit(it) }
-            addRow("ش س ي ب ل ا ت ن م ك".split(" ")) { commit(it) }
-            addSpecialRow(left = "⇧", letters = "ئ ء ؤ ر ى ة و ز ظ", right = "⌫")
-        } else {
-            addRow("q w e r t y u i o p".split(" ")) {
-                commit(if (shiftEnabled) it.uppercase() else it)
-            }
-            addRow("a s d f g h j k l".split(" ")) {
-                commit(if (shiftEnabled) it.uppercase() else it)
-            }
-            addSpecialRow(left = "⇧", letters = "z x c v b n m", right = "⌫")
+        when {
+            emojiMode -> buildEmojiLayout()
+            symbolsMode -> buildSymbolsLayout()
+            language == "ar" -> buildArabicLayout()
+            else -> buildEnglishLayout()
         }
+    }
+
+    /**
+     * The visual left-to-right positions intentionally follow the user's
+     * reference keyboard. Keep these arrays in visual order.
+     */
+    private fun buildArabicLayout() {
+        addKeyRow(
+            listOf(
+                key("ض", "١", alternatives = listOf("ظ")),
+                key("ص", "٢"),
+                key("ق", "٣", alternatives = listOf("ث", "ڤ")),
+                key("ف", "٤", alternatives = listOf("ڤ")),
+                key("غ", "٥"),
+                key("ع", "٦"),
+                key("ه", "٧", alternatives = listOf("ة", "ۀ")),
+                key("خ", "٨"),
+                key("ح", "٩"),
+                key("ج", "٠")
+            )
+        )
+
+        addKeyRow(
+            listOf(
+                key("ش", alternatives = listOf("شّ")),
+                key("س"),
+                key("ي", "ى", alternatives = listOf("ى", "ئ", "ې")),
+                key("ب"),
+                key("ل", "لا", alternatives = listOf("لا")),
+                key("ا", "أ", alternatives = listOf("أ", "إ", "آ", "ٱ")),
+                key("ت", alternatives = listOf("ة")),
+                key("ن", alternatives = listOf("ً", "ٌ", "ٍ")),
+                key("م"),
+                key("ك", alternatives = listOf("گ", "ڪ"))
+            ),
+            insetStart = 2,
+            insetEnd = 2
+        )
+
+        addKeyRow(
+            listOf(
+                key("ظ"),
+                key("ط"),
+                key("ذ"),
+                key("د", alternatives = listOf("ذ")),
+                key("ز"),
+                key("ر", alternatives = listOf("ڑ")),
+                key("و", "ؤ", alternatives = listOf("ؤ")),
+                key("ة", "ۀ", alternatives = listOf("ه", "ۀ")),
+                key("ث"),
+                functionKey("⌫", 1.15f, onTap = { backspace() }, onLongPress = { deleteWord() })
+            )
+        )
+
+        addBottomRow()
+    }
+
+    private fun buildEnglishLayout() {
+        addKeyRow(
+            "q w e r t y u i o p".split(" ").mapIndexed { index, letter ->
+                key(letter, (index + 1).toString(), alternatives = englishAlternates(letter))
+            }
+        )
+        addKeyRow(
+            "a s d f g h j k l".split(" ").map { letter ->
+                key(letter, alternatives = englishAlternates(letter))
+            },
+            insetStart = 10,
+            insetEnd = 10
+        )
+        addKeyRow(
+            listOf(
+                functionKey("⇧", 1.25f, onTap = { shiftEnabled = !shiftEnabled; rebuildKeyboard() }),
+                *"z x c v b n m".split(" ").map { letter ->
+                    key(if (shiftEnabled) letter.uppercase() else letter, alternatives = englishAlternates(letter))
+                }.toTypedArray(),
+                functionKey("⌫", 1.25f, onTap = { backspace() }, onLongPress = { deleteWord() })
+            )
+        )
+        addBottomRow()
+    }
+
+    private fun englishAlternates(letter: String): List<String> = when (letter) {
+        "a" -> listOf("á", "à", "ä", "â", "æ")
+        "e" -> listOf("é", "è", "ë", "ê")
+        "i" -> listOf("í", "ì", "ï", "î")
+        "o" -> listOf("ó", "ò", "ö", "ô", "œ")
+        "u" -> listOf("ú", "ù", "ü", "û")
+        "n" -> listOf("ñ")
+        "c" -> listOf("ç")
+        else -> emptyList()
+    }
+
+    private fun buildSymbolsLayout() {
+        addKeyRow(
+            listOf("!", "@", "#", "$", "%", "&", "-", "+", "(", ")").map {
+                key(it, kind = KeyKind.ACCENT)
+            }
+        )
+        addKeyRow(
+            listOf("/", ":", ";", "'", """, "?", "¿", "=", "_", "\\").map {
+                key(it, kind = KeyKind.ACCENT)
+            },
+            insetStart = 4,
+            insetEnd = 4
+        )
+        addKeyRow(
+            listOf("~", "`", "|", "•", "√", "π", "÷", "×", "¶").map {
+                key(it, kind = KeyKind.ACCENT)
+            } + functionKey("⌫", 1.15f, onTap = { backspace() }, onLongPress = { deleteWord() })
+        )
+        addBottomRow()
+    }
+
+    private fun buildEmojiLayout() {
+        addKeyRow(listOf("😀", "😂", "🥹", "😍", "😘", "😎", "🤔", "😭", "😊", "😉").map {
+            key(it, kind = KeyKind.ACCENT)
+        })
+        addKeyRow(listOf("👍", "👎", "👏", "🙏", "💪", "🔥", "❤️", "💯", "✅", "🚀").map {
+            key(it, kind = KeyKind.ACCENT)
+        })
+        addKeyRow(listOf("🎯", "🔒", "💻", "🛡️", "⚡", "🌐", "📌", "⭐", "💡").map {
+            key(it, kind = KeyKind.ACCENT)
+        } + functionKey("⌫", 1.15f, onTap = { backspace() }))
         addBottomRow()
     }
 
     private fun addBottomRow() {
         val row = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
+            layoutDirection = View.LAYOUT_DIRECTION_LTR
             gravity = Gravity.CENTER_VERTICAL
         }
-        row.addView(keyButton("?123", 1.25f, true) {
-            symbolsMode = !symbolsMode
-            emojiMode = false
-            rebuildKeyboard()
+
+        row.addView(
+            createKeyView(functionKey("@?!", 1.05f, onTap = {
+                symbolsMode = true
+                emojiMode = false
+                rebuildKeyboard()
+            })),
+            keyLayout(1.05f, 54)
+        )
+        row.addView(
+            createKeyView(functionKey("123", 1.0f, onTap = {
+                symbolsMode = !symbolsMode
+                emojiMode = false
+                rebuildKeyboard()
+            })),
+            keyLayout(1.0f, 54)
+        )
+        row.addView(
+            createKeyView(
+                key(if (language == "ar") "،" else ",", kind = KeyKind.ACCENT,
+                    alternatives = listOf("؛", ":", "!", "؟", "."))
+            ),
+            keyLayout(0.82f, 54)
+        )
+        row.addView(createSpaceCluster(), keyLayout(4.25f, 54))
+        row.addView(
+            createKeyView(
+                key(".", kind = KeyKind.ACCENT, alternatives = listOf("؟", "!", "…", "؟", "。"))
+            ),
+            keyLayout(0.82f, 54)
+        )
+        row.addView(
+            createKeyView(functionKey("↵", 1.15f, KeyKind.PRIMARY, onTap = { sendEnter() })),
+            keyLayout(1.15f, 54)
+        )
+
+        keyboardContainer.addView(row, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            dp(58)
+        ).apply {
+            topMargin = dp(4)
+            bottomMargin = dp(1)
         })
-        row.addView(keyButton("😊", 0.9f, true) {
-            emojiMode = !emojiMode
-            symbolsMode = false
-            rebuildKeyboard()
-        })
-        row.addView(keyButton("،", 0.8f, false) { commit(if (language == "ar") "،" else ",") })
-        row.addView(keyButton("ع/EN", 1.1f, true) {
-            language = if (language == "ar") "en" else "ar"
-            symbolsMode = false
-            emojiMode = false
-            rebuildKeyboard()
-        })
-        row.addView(keyButton("مسافة", 3.5f, false) { commit(" ") })
-        row.addView(keyButton(".", 0.8f, false) { commit(".") })
-        row.addView(keyButton("↵", 1.0f, true) { sendEnter() })
-        keyboardContainer.addView(row)
     }
 
-    private fun addSpecialRow(left: String, letters: String, right: String) {
+    private fun createSpaceCluster(): FrameLayout {
+        val root = FrameLayout(this).apply {
+            background = keyBackground(KeyKind.PRIMARY)
+            elevation = dp(2).toFloat()
+            isClickable = true
+            isFocusable = true
+            setOnClickListener {
+                performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                currentInputConnection?.commitText(" ", 1)
+            }
+        }
+
+        val center = TextView(this).apply {
+            text = if (language == "ar") "مسافة" else "SPACE"
+            gravity = Gravity.CENTER
+            setTextColor(Color.rgb(238, 250, 255))
+            textSize = 12f
+            typeface = Typeface.DEFAULT_BOLD
+        }
+        root.addView(center, FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.MATCH_PARENT
+        ).apply {
+            leftMargin = dp(30)
+            rightMargin = dp(30)
+        })
+
+        val left = TextView(this).apply {
+            text = "◀"
+            gravity = Gravity.CENTER
+            textSize = 11f
+            setTextColor(Color.rgb(83, 223, 210))
+            setOnClickListener { moveCursor(-1) }
+        }
+        root.addView(left, FrameLayout.LayoutParams(dp(30), ViewGroup.LayoutParams.MATCH_PARENT, Gravity.START))
+
+        val right = TextView(this).apply {
+            text = "▶"
+            gravity = Gravity.CENTER
+            textSize = 11f
+            setTextColor(Color.rgb(83, 223, 210))
+            setOnClickListener { moveCursor(1) }
+        }
+        root.addView(right, FrameLayout.LayoutParams(dp(30), ViewGroup.LayoutParams.MATCH_PARENT, Gravity.END))
+
+        return root
+    }
+
+    private fun addKeyRow(keys: List<KeySpec>, insetStart: Int = 0, insetEnd: Int = 0) {
         val row = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
+            layoutDirection = View.LAYOUT_DIRECTION_LTR
             gravity = Gravity.CENTER_VERTICAL
         }
-        row.addView(keyButton(left, 1.1f, true) {
-            shiftEnabled = !shiftEnabled
-            rebuildKeyboard()
+
+        keys.forEach { spec ->
+            row.addView(createKeyView(spec), keyLayout(spec.weight, 50))
+        }
+
+        keyboardContainer.addView(row, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            dp(54)
+        ).apply {
+            leftMargin = dp(insetStart)
+            rightMargin = dp(insetEnd)
+            bottomMargin = dp(2)
         })
-        letters.split(" ").forEach { letter ->
-            row.addView(keyButton(letter, 1f, false) {
-                commit(if (shiftEnabled && language == "en") letter.uppercase() else letter)
-                if (shiftEnabled) {
-                    shiftEnabled = false
-                    rebuildKeyboard()
+    }
+
+    private fun keyLayout(weight: Float, heightDp: Int): LinearLayout.LayoutParams =
+        LinearLayout.LayoutParams(0, dp(heightDp), weight).apply {
+            setMargins(dp(2), dp(2), dp(2), dp(2))
+        }
+
+    private fun key(
+        label: String,
+        hint: String = "",
+        weight: Float = 1f,
+        kind: KeyKind = KeyKind.LETTER,
+        alternatives: List<String> = emptyList(),
+        onTap: (() -> Unit)? = null
+    ) = KeySpec(label, hint, weight, kind, alternatives, onTap)
+
+    private fun functionKey(
+        label: String,
+        weight: Float = 1f,
+        kind: KeyKind = KeyKind.FUNCTION,
+        onTap: (() -> Unit)? = null,
+        onLongPress: (() -> Unit)? = null
+    ) = KeySpec(label, weight = weight, kind = kind, onTap = onTap, onLongPress = onLongPress)
+
+    private fun createKeyView(spec: KeySpec): FrameLayout {
+        val root = FrameLayout(this).apply {
+            background = keyBackground(spec.kind)
+            elevation = dp(if (spec.kind == KeyKind.PRIMARY) 3 else 2).toFloat()
+            isClickable = true
+            isFocusable = true
+            contentDescription = spec.label
+            setOnClickListener {
+                performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                spec.onTap?.invoke() ?: when (spec.label) {
+                    "⌫" -> backspace()
+                    "↵" -> sendEnter()
+                    "⇧" -> { shiftEnabled = !shiftEnabled; rebuildKeyboard() }
+                    else -> commit(if (language == "en" && shiftEnabled && spec.label.length == 1) {
+                        spec.label.uppercase()
+                    } else {
+                        spec.label
+                    })
                 }
+            }
+            setOnLongClickListener {
+                if (spec.alternates.isNotEmpty()) {
+                    showAlternates(this, spec.alternates)
+                    true
+                } else if (spec.onLongPress != null) {
+                    spec.onLongPress.invoke()
+                    true
+                } else {
+                    false
+                }
+            }
+        }
+
+        val label = TextView(this).apply {
+            text = spec.label
+            gravity = Gravity.CENTER
+            includeFontPadding = false
+            textSize = when {
+                spec.label.length > 3 -> 11f
+                spec.label.length > 1 -> 15f
+                else -> 23f
+            }
+            typeface = if (spec.kind == KeyKind.LETTER) Typeface.DEFAULT else Typeface.DEFAULT_BOLD
+            setTextColor(
+                if (spec.kind == KeyKind.LETTER) Color.rgb(235, 245, 251)
+                else Color.rgb(90, 232, 216)
+            )
+        }
+        root.addView(label, FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.MATCH_PARENT
+        ))
+
+        if (spec.hint.isNotBlank()) {
+            val hint = TextView(this).apply {
+                text = spec.hint
+                textSize = 8f
+                gravity = Gravity.TOP or Gravity.END
+                setTextColor(Color.rgb(100, 192, 202))
+                setPadding(0, dp(3), dp(5), 0)
+            }
+            root.addView(hint, FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+            ))
+        }
+        return root
+    }
+
+    private fun showAlternates(anchor: View, alternatives: List<String>) {
+        val content = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(dp(5), dp(5), dp(5), dp(5))
+            background = roundedBackground(
+                intArrayOf(Color.rgb(14, 34, 51), Color.rgb(8, 20, 34)),
+                Color.rgb(69, 201, 199),
+                12
+            )
+        }
+
+        var popup: PopupWindow? = null
+        alternatives.distinct().forEach { alternative ->
+            val option = TextView(this).apply {
+                text = alternative
+                gravity = Gravity.CENTER
+                textSize = 21f
+                setTextColor(Color.WHITE)
+                background = roundedBackground(
+                    intArrayOf(Color.rgb(29, 59, 77), Color.rgb(18, 42, 59)),
+                    Color.rgb(47, 102, 120),
+                    8
+                )
+                setOnClickListener {
+                    commit(alternative)
+                    popup?.dismiss()
+                }
+            }
+            content.addView(option, LinearLayout.LayoutParams(dp(42), dp(42)).apply {
+                setMargins(dp(2), 0, dp(2), 0)
             })
         }
-        row.addView(keyButton(right, 1.2f, true) {
-            currentInputConnection?.deleteSurroundingText(1, 0)
-        })
-        keyboardContainer.addView(row)
+
+        popup = PopupWindow(content, ViewGroup.LayoutParams.WRAP_CONTENT, dp(52), true).apply {
+            isOutsideTouchable = true
+            setBackgroundDrawable(roundedBackground(
+                intArrayOf(Color.rgb(10, 24, 39), Color.rgb(7, 16, 27)),
+                Color.rgb(55, 148, 157),
+                12
+            ))
+            elevation = dp(8).toFloat()
+            showAsDropDown(anchor, 0, -dp(58))
+        }
     }
 
-    private fun addRow(keys: List<String>, action: (String) -> Unit) {
-        val row = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
+    private fun keyBackground(kind: KeyKind): StateListDrawable {
+        val normal = when (kind) {
+            KeyKind.LETTER -> intArrayOf(Color.rgb(35, 57, 77), Color.rgb(21, 39, 58))
+            KeyKind.FUNCTION -> intArrayOf(Color.rgb(22, 73, 87), Color.rgb(13, 48, 65))
+            KeyKind.ACCENT -> intArrayOf(Color.rgb(27, 66, 79), Color.rgb(17, 46, 62))
+            KeyKind.PRIMARY -> intArrayOf(Color.rgb(22, 132, 143), Color.rgb(13, 83, 105))
         }
-        keys.forEach { key ->
-            row.addView(keyButton(key, 1f, false) { action(key) })
+        val pressed = when (kind) {
+            KeyKind.LETTER -> intArrayOf(Color.rgb(53, 101, 125), Color.rgb(33, 75, 99))
+            KeyKind.FUNCTION -> intArrayOf(Color.rgb(39, 111, 124), Color.rgb(21, 77, 94))
+            KeyKind.ACCENT -> intArrayOf(Color.rgb(40, 111, 122), Color.rgb(22, 74, 91))
+            KeyKind.PRIMARY -> intArrayOf(Color.rgb(35, 170, 168), Color.rgb(17, 111, 134))
         }
-        keyboardContainer.addView(row)
-    }
 
-    private fun keyButton(
-        label: String,
-        weight: Float,
-        special: Boolean,
-        onClick: () -> Unit
-    ): TextView {
-        val view = TextView(this).apply {
-            text = label
-            gravity = Gravity.CENTER
-            setTextColor(if (special) Color.rgb(91, 231, 202) else Color.rgb(229, 239, 248))
-            textSize = when {
-                label.length > 5 -> 9f
-                label.length > 2 -> 11f
-                else -> 18f
-            }
-            typeface = Typeface.DEFAULT
-            background = rounded(
-                if (special) Color.rgb(18, 57, 69) else Color.rgb(20, 34, 51),
-                if (special) Color.rgb(48, 124, 131) else Color.rgb(36, 58, 77),
-                9
+        return StateListDrawable().apply {
+            addState(
+                intArrayOf(android.R.attr.state_pressed),
+                roundedBackground(pressed, Color.rgb(104, 237, 221), 9)
             )
-            setOnClickListener { onClick() }
-            isFocusable = true
-            contentDescription = label
+            addState(
+                intArrayOf(),
+                roundedBackground(normal, Color.rgb(52, 91, 112), 9)
+            )
         }
-        view.layoutParams = rowLayout(weight)
-        return view
     }
 
-    private fun actionButton(symbol: String, description: String, action: () -> Unit): TextView =
-        TextView(this).apply {
-            text = symbol
-            contentDescription = description
-            gravity = Gravity.CENTER
-            textSize = 20f
-            setTextColor(Color.rgb(84, 224, 197))
-            background = rounded(Color.rgb(14, 34, 49), Color.rgb(37, 83, 94), 10)
-            layoutParams = LinearLayout.LayoutParams(dp(43), dp(34)).apply {
-                marginStart = dp(5)
-            }
-            setOnClickListener { action() }
-        }
+    private fun toolBackground() = roundedBackground(
+        intArrayOf(Color.rgb(15, 34, 52), Color.rgb(10, 25, 41)),
+        Color.rgb(31, 69, 86),
+        9
+    )
 
-    private fun rowLayout(weight: Float) = LinearLayout.LayoutParams(0, dp(45), weight).apply {
-        setMargins(dp(2), dp(3), dp(2), dp(3))
-    }
-
-    private fun rounded(fill: Int, stroke: Int, radius: Int) =
-        GradientDrawable().apply {
-            shape = GradientDrawable.RECTANGLE
+    private fun roundedBackground(colors: IntArray, stroke: Int, radius: Int) =
+        GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, colors).apply {
             cornerRadius = dp(radius).toFloat()
-            setColor(fill)
             setStroke(dp(1), stroke)
         }
-
-    private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 
     private fun commit(value: String) {
         currentInputConnection?.commitText(value, 1)
     }
 
+    private fun backspace() {
+        currentInputConnection?.deleteSurroundingTextInCodePoints(1, 0)
+    }
+
+    private fun deleteWord() {
+        currentInputConnection?.deleteSurroundingTextInCodePoints(32, 0)
+    }
+
+    private fun moveCursor(direction: Int) {
+        val keyCode = if (direction < 0) {
+            android.view.KeyEvent.KEYCODE_DPAD_LEFT
+        } else {
+            android.view.KeyEvent.KEYCODE_DPAD_RIGHT
+        }
+        currentInputConnection?.sendKeyEvent(
+            android.view.KeyEvent(android.view.KeyEvent.ACTION_DOWN, keyCode)
+        )
+        currentInputConnection?.sendKeyEvent(
+            android.view.KeyEvent(android.view.KeyEvent.ACTION_UP, keyCode)
+        )
+    }
+
     private fun sendEnter() {
         val connection: InputConnection = currentInputConnection ?: return
-        val eventDown = android.view.KeyEvent(
-            android.view.KeyEvent.ACTION_DOWN,
-            android.view.KeyEvent.KEYCODE_ENTER
+        if (sendDefaultEditorAction(true)) return
+
+        connection.sendKeyEvent(
+            android.view.KeyEvent(android.view.KeyEvent.ACTION_DOWN, android.view.KeyEvent.KEYCODE_ENTER)
         )
-        val eventUp = android.view.KeyEvent(
-            android.view.KeyEvent.ACTION_UP,
-            android.view.KeyEvent.KEYCODE_ENTER
+        connection.sendKeyEvent(
+            android.view.KeyEvent(android.view.KeyEvent.ACTION_UP, android.view.KeyEvent.KEYCODE_ENTER)
         )
-        connection.sendKeyEvent(eventDown)
-        connection.sendKeyEvent(eventUp)
+    }
+
+    private fun toggleLanguage() {
+        language = if (language == "ar") "en" else "ar"
+        symbolsMode = false
+        emojiMode = false
+        shiftEnabled = false
+        rebuildKeyboard()
     }
 
     private fun openArchive() {
@@ -326,6 +718,13 @@ class KeyboardImeService : InputMethodService() {
             Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         )
     }
+
+    private fun toast(message: String) {
+        Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
+    }
+
+    private fun dp(value: Int): Int =
+        (value * resources.displayMetrics.density).toInt()
 
     private fun isPasswordField(inputType: Int): Boolean {
         val inputClass = inputType and InputType.TYPE_MASK_CLASS
@@ -342,26 +741,37 @@ class KeyboardImeService : InputMethodService() {
 
     private fun captureClipboard() {
         if (privateInput || !::clipboardManager.isInitialized) return
-        val clip = clipboardManager.primaryClip ?: return
+
+        val clip = runCatching { clipboardManager.primaryClip }.getOrNull() ?: return
         val description = clip.description ?: return
         if (description.label?.toString() == INTERNAL_CLIP_LABEL) return
 
-        val extras = description.extras
-        val markedSensitive = if (android.os.Build.VERSION.SDK_INT >= 33) {
-            extras?.getBoolean(ClipDescription.EXTRA_IS_SENSITIVE, false) == true
-        } else {
-            extras?.getBoolean("android.content.extra.IS_SENSITIVE", false) == true
-        }
+        val markedSensitive = runCatching {
+            description.extras?.getBoolean(ClipDescription.EXTRA_IS_SENSITIVE, false) == true
+        }.getOrDefault(false)
         if (markedSensitive) return
 
-        val payloads = (0 until clip.itemCount).mapNotNull { index ->
-            runCatching { clip.getItemAt(index).coerceToText(this)?.toString() }.getOrNull()
-        }.filter { it.isNotEmpty() }
+        // A single clipboard operation becomes one archive record. If Android
+        // provides multiple text items, preserve them together rather than
+        // creating a separate row for each item.
+        val parts = (0 until clip.itemCount).mapNotNull { index ->
+            runCatching {
+                clip.getItemAt(index).coerceToText(this)?.toString()
+            }.getOrNull()
+        }.filter { it.isNotEmpty() }.distinct()
 
-        if (payloads.isEmpty()) return
+        if (parts.isEmpty()) return
+        val completeText = parts.joinToString("\n")
+        val copiedAt = description.timestamp
+
         io.execute {
-            val store = ClipStore.get(applicationContext)
-            payloads.forEach { value -> runCatching { store.insert(value) } }
+            val saved = runCatching {
+                ClipStore.get(applicationContext).insertClipboard(completeText, copiedAt)
+            }.getOrDefault(-1L)
+
+            if (saved > 0L) {
+                mainHandler.post { refreshSuggestions() }
+            }
         }
     }
 
