@@ -4,6 +4,16 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
+val stableKeystorePath = System.getenv("KEYSTORE_PATH")
+val stableKeystorePassword = System.getenv("KEYSTORE_PASSWORD")
+val stableKeyAlias = System.getenv("KEY_ALIAS")
+val stableKeyPassword = System.getenv("KEY_PASSWORD")
+
+val hasStableSigning = !stableKeystorePath.isNullOrBlank() &&
+    !stableKeystorePassword.isNullOrBlank() &&
+    !stableKeyAlias.isNullOrBlank() &&
+    !stableKeyPassword.isNullOrBlank()
+
 android {
     namespace = "com.cybersecurityrahbar.keyboardcyber"
     compileSdk = 37
@@ -12,8 +22,30 @@ android {
         applicationId = "com.cybersecurityrahbar.keyboardcyber"
         minSdk = 26
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 2
+        versionName = "0.2.0"
+    }
+
+    signingConfigs {
+        if (hasStableSigning) {
+            create("stable") {
+                storeFile = file(stableKeystorePath!!)
+                storeType = "PKCS12"
+                storePassword = stableKeystorePassword
+                keyAlias = stableKeyAlias
+                keyPassword = stableKeyPassword
+            }
+        }
+    }
+
+    buildTypes {
+        getByName("debug") {
+            // CI supplies the project's persistent key through GitHub Actions Secrets.
+            // Local development without secrets keeps the normal local debug signing key.
+            if (hasStableSigning) {
+                signingConfig = signingConfigs.getByName("stable")
+            }
+        }
     }
 
     buildFeatures {
