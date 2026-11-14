@@ -84,6 +84,12 @@
 
 ## 8. سجل التنفيذ
 
+### 14 نوفمبر 2026 — إصلاح فشل تثبيت Android API 37 في CI
+- بعد ترقية setup-android، انتقل CI من خطوة الإعداد إلى خطوة تنزيل المنصة، لكنه فشل لأن SDK Manager لم يعثر على `platforms;android-37`.
+- تحققنا من وثائق إعداد Android 17 ومن سجل حزم SDK: حزمة المنصة الحالية منشورة باسم `platforms;android-37.0` وبقناة Preview/Canary، وأدوات البناء 37.x. كما توجد مشكلة توافق مع بعض أدوات البناء التي تبحث عن المجلد `android-37` بينما التنزيل يضعه في `android-37.0`.
+- عدّلنا CI لاستخدام `sdkmanager --channel=3` لتنزيل `platforms;android-37.0` و`build-tools;37.0.0`، ثم إنشاء symlink `android-37` عند غيابه. هذا workaround يحتاج نتيجة تشغيل فعلية للتأكيد.
+- لم يصل CI بعد إلى خطوة Gradle أو Kotlin compile؛ لذلك لا يوجد بناء APK ناجح مؤكّد حتى هذه النقطة.
+
 ### 14 نوفمبر 2026 — إصلاح فشل CI الأول
 - فحصنا سجل GitHub Actions للوظيفة الفاشلة رقم 1؛ لم يصل البناء أصلاً إلى Gradle. السبب كان `android-actions/setup-android@v3` الذي حاول تثبيت حزمة Android SDK القديمة `tools`، وهي لم تعد متاحة، ففشل `sdkmanager` برسالة `Failed to find package 'tools'`.
 - تم تحديث workflow إلى `android-actions/setup-android@v4` الذي لا يطلب حزمة tools المحذوفة، كما تمت ترقية actions إلى إصدارات Node 24 الحالية: checkout v7 وsetup-java v6 وsetup-gradle v6.
