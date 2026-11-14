@@ -131,8 +131,15 @@
 
 - تمت إضافة Gradle Wrapper الرسمي 9.7.0 (shell + Windows + JAR + properties)، وتثبيت SHA-256 لتوزيعة Gradle وكذلك بصمة wrapper JAR. يستخدم CI الآن `./gradlew` بدلاً من Gradle مثبت بصورة منفصلة.
 
+### 15 نوفمبر 2026 — تأكيد بناء APK عبر GitHub Actions
+- تم فحص أحدث تشغيل CI: Android build run #18 على الفرع main، والنتيجة completed / success.
+- نجحت خطوات Set up JDK 17 وGradle وAndroid SDK وتثبيت Android 37.0 وتنفيذ `./gradlew --no-daemon assembleDebug` ورفع ملف البناء.
+- تم إنشاء artifact باسم `keyboard-cyber-debug` بحجم 18,049,410 بايت (نحو 18.0 MB)، وصلاحيته 14 يوماً من وقت الرفع.
+- صفحة التشغيل: https://github.com/CybersecurityRahbar/Keyboard-Cyber/actions/runs/43641721980
+- ملف APK متاح داخل artifact من صفحة التشغيل؛ لم يتم تنزيله إلى بيئة المحادثة، لذلك لا يوجد مسار sandbox محلي صحيح له.
+- نجاح CI يؤكد التجميع والرفع فقط؛ لم يتم اختبار APK على هاتف Android فعلي بعد.
+
 ### ما لم يتم التحقق منه بعد
-- نجاح بناء CI لم يتم تأكيده بعد.
 - لم يتم اختبار APK على هاتف فعلي.
 - لوحة المفاتيح الحالية نموذج تشغيل تأسيسي وتحتاج تحسيناً بصرياً ووظيفياً.
 - لم يضف بعد دعم 50+ تخطيط لغة.
