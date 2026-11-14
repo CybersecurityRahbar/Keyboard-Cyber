@@ -80,9 +80,15 @@
 10. DeepL API plans: https://support.deepl.com/hc/en-us/articles/360021200939-DeepL-API-plans
 11. Google Cloud API key best practices: https://docs.cloud.google.com/docs/authentication/api-keys-best-practices
 
-مراجع التوافق المبدئية: Android Gradle Plugin 9.5.1 / Gradle 9.9.1 / Kotlin 2.4.21 / JDK 17 / Compose BOM 2026.09.00 / compile API 37. يجب إعادة التحقق عند الترقية.
+إعداد التوافق المعتمد بعد المراجعة: Android Gradle Plugin 9.3.0 / Gradle 9.7.0 / Kotlin Gradle Plugin 2.4.21 / JDK 17 / Compose BOM 2026.09.00 / compile API 37. هذا الاختيار يطابق جدول التوافق الكامل المعلن لـ Kotlin 2.4.20–2.4.21 (حتى AGP 9.3.1 وGradle 9.7.0) مع دعم AGP 9.3 لـ API 37. لا تعتمد الإصدارات الأحدث لمجرد أنها أحدث إذا خرجت عن مصفوفة التوافق الكاملة.
 
 ## 8. سجل التنفيذ
+
+### 14 نوفمبر 2026 — مراجعة توافق البناء
+- تمت مراجعة مصفوفة التوافق الرسمية لـ Kotlin Gradle Plugin؛ الإصدارات 2.4.20–2.4.21 مدعومة بالكامل حتى AGP 9.3.1 وGradle 9.7.0.
+- تم تعديل إعداد المشروع وCI من AGP 9.5.1 / Gradle 9.9.1 الأوليين إلى AGP 9.3.0 / Gradle 9.7.0 لتفادي الجمع بين إصدارات أحدث من الحد الأعلى المدعوم بالكامل.
+- AGP 9.3 يدعم compileSdk 37؛ JDK 17 مطلوب.
+- هذا تعديل توافق احترازي، وليس دليلاً على نجاح بناء APK؛ لم يتوفر حتى الآن تقرير CI أو تشغيل Android Studio يؤكد نجاح البناء.
 
 ### 14 نوفمبر 2026 — التأسيس الأول
 - فحص المستودع الجديد؛ كان يحتوي README أولياً فقط.
