@@ -49,3 +49,10 @@ gradlew.bat assembleDebug
 النصوص تبقى محلياً في قاعدة SQLite داخل مساحة التطبيق. الإصدار الحالي لا يرفع محتويات الحافظة إلى خادم. لا يلتقط حقول كلمات المرور المعروفة ولا محتويات الحافظة الموسومة من النظام كمحتوى حساس.
 
 راجع [PROJECT_CONTEXT.md](PROJECT_CONTEXT.md) و[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) للقرارات والخطة وسجل التطوير.
+
+
+## Persistent app signing and updates
+
+For future APK updates to install over the existing app without clearing its private app data, every distributed build must use the same package ID and the same persistent signing key, with an increasing `versionCode`.
+
+This repository intentionally does not contain the private signing key. Configure the four GitHub Actions secrets described in [docs/SIGNING.md](docs/SIGNING.md). Until they are configured, CI compiles a local-debug build but does not publish it as an update artifact.
