@@ -27,7 +27,7 @@ import com.cybersecurityrahbar.keyboardcyber.data.ClipStore
 import com.cybersecurityrahbar.keyboardcyber.data.KeyboardPreferences
 import java.util.concurrent.Executors
 
-private enum class KeyKind { LETTER, FUNCTION, ACCENT }
+private enum class KeyKind { LETTER, FUNCTION, ACCENT, PRIMARY }
 
 private data class KeySpec(
     val label: String,
@@ -111,7 +111,7 @@ class KeyboardImeService : InputMethodService() {
         }
         root.addView(keyboardContainer)
 
-        rebuildSuggestions()
+        refreshSuggestions()
         rebuildKeyboard()
         return root
     }
