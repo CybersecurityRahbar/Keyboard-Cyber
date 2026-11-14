@@ -84,6 +84,12 @@
 
 ## 8. سجل التنفيذ
 
+### 14 نوفمبر 2026 — إصلاح فشل CI الأول
+- فحصنا سجل GitHub Actions للوظيفة الفاشلة رقم 1؛ لم يصل البناء أصلاً إلى Gradle. السبب كان `android-actions/setup-android@v3` الذي حاول تثبيت حزمة Android SDK القديمة `tools`، وهي لم تعد متاحة، ففشل `sdkmanager` برسالة `Failed to find package 'tools'`.
+- تم تحديث workflow إلى `android-actions/setup-android@v4` الذي لا يطلب حزمة tools المحذوفة، كما تمت ترقية actions إلى إصدارات Node 24 الحالية: checkout v7 وsetup-java v6 وsetup-gradle v6.
+- تم الإبقاء على تثبيت Android Platform 37 وBuild Tools 36.0.0 بعد تهيئة SDK.
+- لم يتم بعد تأكيد نجاح التشغيل التالي؛ يجب قراءة نتيجة run الجديدة وسجلاته وعدم إعلان نجاح البناء قبل ذلك.
+
 ### 14 نوفمبر 2026 — مراجعة تكامل Kotlin المدمج في AGP 9
 - وثائق Android الرسمية تؤكد أن AGP 9 يفعّل Kotlin المدمج، وأن تطبيق org.jetbrains.kotlin.android بالتزامن معه يؤدي إلى تعارض إضافة kotlin.
 - أبقينا KGP 2.4.21 مؤقتاً، لذلك فعّلنا مسار الانتقال الرسمي بإعداد android.builtInKotlin=false وandroid.newDsl=false معاً. يجب إزالة العلمين وإزالة kotlin-android plugin عند الانتقال إلى Kotlin المدمج.
