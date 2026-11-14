@@ -9,6 +9,7 @@ import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.StateListDrawable
 import android.inputmethodservice.InputMethodService
+import android.os.Build
 import android.text.InputType
 import android.view.Gravity
 import android.view.HapticFeedbackConstants
@@ -341,12 +342,12 @@ class KeyboardImeService : InputMethodService() {
 
     private fun buildSymbolsLayout() {
         addKeyRow(
-            listOf("!", "@", "#", "$", "%", "&", "-", "+", "(", ")").map {
+            listOf("!", "@", "#", 36.toChar().toString(), "%", "&", "-", "+", "(", ")").map {
                 key(it, kind = KeyKind.ACCENT)
             }
         )
         addKeyRow(
-            listOf("/", ":", ";", "'", """, "?", "¿", "=", "_", "\\").map {
+            listOf("/", ":", ";", "'", 34.toChar().toString(), "?", "¿", "=", "_", "\\\\").map {
                 key(it, kind = KeyKind.ACCENT)
             },
             insetStart = 4,
@@ -426,6 +427,7 @@ class KeyboardImeService : InputMethodService() {
 
     private fun createSpaceCluster(): FrameLayout {
         val root = FrameLayout(this).apply {
+            layoutDirection = View.LAYOUT_DIRECTION_LTR
             background = keyBackground(KeyKind.PRIMARY)
             elevation = dp(2).toFloat()
             isClickable = true
@@ -746,8 +748,13 @@ class KeyboardImeService : InputMethodService() {
         val description = clip.description ?: return
         if (description.label?.toString() == INTERNAL_CLIP_LABEL) return
 
+        val sensitiveExtra = if (Build.VERSION.SDK_INT >= 33) {
+            ClipDescription.EXTRA_IS_SENSITIVE
+        } else {
+            "android.content.extra.IS_SENSITIVE"
+        }
         val markedSensitive = runCatching {
-            description.extras?.getBoolean(ClipDescription.EXTRA_IS_SENSITIVE, false) == true
+            description.extras?.getBoolean(sensitiveExtra, false) == true
         }.getOrDefault(false)
         if (markedSensitive) return
 
