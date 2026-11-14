@@ -80,9 +80,13 @@
 10. DeepL API plans: https://support.deepl.com/hc/en-us/articles/360021200939-DeepL-API-plans
 11. Google Cloud API key best practices: https://docs.cloud.google.com/docs/authentication/api-keys-best-practices
 
-إعداد التوافق المعتمد بعد المراجعة: Android Gradle Plugin 9.3.0 / Gradle 9.7.0 / Kotlin Gradle Plugin 2.4.21 / JDK 17 / Compose BOM 2026.09.00 / compile API 37. هذا الاختيار يطابق جدول التوافق الكامل المعلن لـ Kotlin 2.4.20–2.4.21 (حتى AGP 9.3.1 وGradle 9.7.0) مع دعم AGP 9.3 لـ API 37. لا تعتمد الإصدارات الأحدث لمجرد أنها أحدث إذا خرجت عن مصفوفة التوافق الكاملة.
+إعداد التوافق المعتمد بعد المراجعة: Android Gradle Plugin 9.3.0 / Gradle 9.7.0 / Kotlin Gradle Plugin 2.4.21 / JDK 17 / Compose BOM 2026.09.00 / compile API 37. هذا الاختيار يطابق جدول التوافق الكامل المعلن لـ Kotlin 2.4.20–2.4.21 (حتى AGP 9.3.1 وGradle 9.7.0) مع دعم AGP 9.3 لـ API 37. وبما أن AGP 9 يفعّل Kotlin المدمج افتراضياً، أضفنا مؤقتاً android.builtInKotlin=false وandroid.newDsl=false لاستخدام Kotlin Gradle Plugin 2.4.21 وفق مسار التوافق الانتقالي الموثق رسمياً. يجب إزالة العلمين معاً عند الانتقال لاحقاً إلى Kotlin المدمج. لا تعتمد الإصدارات الأحدث لمجرد أنها أحدث إذا خرجت عن مصفوفة التوافق الكاملة.
 
 ## 8. سجل التنفيذ
+
+### 14 نوفمبر 2026 — مراجعة تكامل Kotlin المدمج في AGP 9
+- وثائق Android الرسمية تؤكد أن AGP 9 يفعّل Kotlin المدمج، وأن تطبيق org.jetbrains.kotlin.android بالتزامن معه يؤدي إلى تعارض إضافة kotlin.
+- أبقينا KGP 2.4.21 مؤقتاً، لذلك فعّلنا مسار الانتقال الرسمي بإعداد android.builtInKotlin=false وandroid.newDsl=false معاً. يجب إزالة العلمين وإزالة kotlin-android plugin عند الانتقال إلى Kotlin المدمج.
 
 ### 14 نوفمبر 2026 — مراجعة توافق البناء
 - تمت مراجعة مصفوفة التوافق الرسمية لـ Kotlin Gradle Plugin؛ الإصدارات 2.4.20–2.4.21 مدعومة بالكامل حتى AGP 9.3.1 وGradle 9.7.0.
