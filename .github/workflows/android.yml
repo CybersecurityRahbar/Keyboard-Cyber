@@ -32,19 +32,55 @@ jobs:
       - name: Install Android 17 SDK platform
         run: |
           sdkmanager --channel=3 "platforms;android-37.0" "build-tools;37.0.0"
-          # The SDK package currently installs as android-37.0, while some AGP
-          # versions still resolve compileSdk 37 through the android-37 path.
           if [ -d "$ANDROID_HOME/platforms/android-37.0" ] && [ ! -e "$ANDROID_HOME/platforms/android-37" ]; then
             ln -s android-37.0 "$ANDROID_HOME/platforms/android-37"
           fi
 
-      - name: Assemble debug APK
+      - name: Prepare persistent app signing key
+        id: stable-signing
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          if [ -z "$KEYSTORE_BASE64" ] || [ -z "$KEYSTORE_PASSWORD" ] || [ -z "$KEY_ALIAS" ] || [ -z "$KEY_PASSWORD" ]; then
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Stable signing secrets are not configured. A local-debug-signed APK will be compiled but not published as an update artifact."
+            exit 0
+          fi
+
+          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/keyboard-cyber-stable.p12"
+          test -s "$RUNNER_TEMP/keyboard-cyber-stable.p12"
+          echo "ready=true" >> "$GITHUB_OUTPUT"
+
+      - name: Assemble APK with persistent signing
+        if: steps.stable-signing.outputs.ready == 'true'
+        env:
+          KEYSTORE_PATH: ${{ runner.temp }}/keyboard-cyber-stable.p12
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: ./gradlew --no-daemon assembleDebug
 
-      - name: Upload debug APK
+      - name: Compile local-debug APK (not published)
+        if: steps.stable-signing.outputs.ready != 'true'
+        run: ./gradlew --no-daemon assembleDebug
+
+      - name: Upload stable-signed APK
+        if: steps.stable-signing.outputs.ready == 'true'
         uses: actions/upload-artifact@v7
         with:
-          name: keyboard-cyber-debug
+          name: keyboard-cyber-stable-debug
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 30
+
+      - name: Publish signing setup reminder
+        if: steps.stable-signing.outputs.ready != 'true'
+        run: |
+          {
+            echo "## APK signing"
+            echo "The project compiled, but no distributable update artifact was uploaded."
+            echo "Configure KEYSTORE_BASE64, KEYSTORE_PASSWORD, KEY_ALIAS, and KEY_PASSWORD in repository Actions secrets, then run this workflow again."
+          } >> "$GITHUB_STEP_SUMMARY"
